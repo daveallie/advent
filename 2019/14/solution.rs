@@ -4,20 +4,20 @@ use std::io;
 #[derive(Debug, Clone)]
 struct ChemAndAmount {
     chem: String,
-    amount: u32,
+    amount: u64,
 }
 
 impl ChemAndAmount {
-    fn fuel_target() -> Self {
+    fn fuel_target(amount: u64) -> Self {
         Self {
             chem: "FUEL".to_string(),
-            amount: 1,
+            amount,
         }
     }
 
     fn from_str(input: &str) -> Self {
         let mut parts = input.split(" ");
-        let amount = parts.next().unwrap().parse::<u32>().unwrap();
+        let amount = parts.next().unwrap().parse::<u64>().unwrap();
         let chem = parts.next().unwrap().to_string();
 
         Self { amount, chem }
@@ -64,14 +64,10 @@ impl Recipe {
 type RecipeMap = HashMap<String, Recipe>;
 
 fn main() {
-    println!("{}", solve(false));
+    println!("{}", solve(true));
 }
 
-fn solve(is_v2: bool) -> u32 {
-    if is_v2 {
-        unimplemented!("Part 2 still pending");
-    }
-
+fn solve(is_v2: bool) -> u64 {
     let mut recipes: RecipeMap = HashMap::new();
 
     loop {
@@ -86,7 +82,36 @@ fn solve(is_v2: bool) -> u32 {
 
     let recipes = recipes;
     let chem_depth_map = build_chem_depth_map(&recipes);
-    let mut requirements = vec![ChemAndAmount::fuel_target()];
+
+    if is_v2 {
+        find_fuel_from(1000000000000, &recipes, &chem_depth_map)
+    } else {
+        find_ore_for(1, &recipes, &chem_depth_map)
+    }
+}
+
+fn find_fuel_from(ore: u64, recipes: &RecipeMap, chem_depth_map: &HashMap<String, u32>) -> u64 {
+    let mut min: u64 = 1;
+    let mut max: u64 = 1000000000;
+
+    while min <= max {
+        let mid = (min + max) / 2;
+        let ore_used = find_ore_for(mid, recipes, chem_depth_map);
+
+        if ore_used < ore {
+            min = mid + 1;
+        } else if ore_used > ore {
+            max = mid - 1;
+        } else {
+            return mid
+        }
+    }
+
+    max
+}
+
+fn find_ore_for(fuel: u64, recipes: &RecipeMap, chem_depth_map: &HashMap<String, u32>) -> u64 {
+    let mut requirements = vec![ChemAndAmount::fuel_target(fuel)];
 
     loop {
         let target = requirements.pop().unwrap();
@@ -107,25 +132,10 @@ fn solve(is_v2: bool) -> u32 {
         requirements.sort_by(|r1, r2| chem_depth_map[&r1.chem].cmp(&chem_depth_map[&r2.chem]));
     }
 
-    /*if is_v2 {
-        let frac_ore_req: f64 = requirements.iter().map(|caa| {
-            let recipe = &recipes[&caa.chem];
-            let res = f64::from(recipe.input[0].amount) * f64::from(caa.amount) / f64::from(recipe.output.amount);
-            println!("{} {} = {} ORE", caa.amount, caa.chem, res);
-            res
-        }).sum();
-
-        println!("{}", frac_ore_req);
-
-        (1000000000000_f64 / frac_ore_req).floor() as u32
-    } else {
-        requirements[0].amount
-    }*/
-
     requirements[0].amount
 }
 
-fn get_required_recipe_count(r: &Recipe, target_amount: u32) -> u32 {
+fn get_required_recipe_count(r: &Recipe, target_amount: u64) -> u64 {
     let output_amount = r.output.amount;
 
     // round up int div of a / b == (a + b - 1) / b
