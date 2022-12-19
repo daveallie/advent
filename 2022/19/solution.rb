@@ -96,6 +96,7 @@ class Day19
 
   def solve(blueprint, time)
     best = 0
+    best_idle = {}
     queue = [State.new(Ores.empty, Ores.from(ore: 1), time)]
     visited = Set.new
 
@@ -109,6 +110,16 @@ class Day19
       next if visited.include?(state)
 
       visited << state
+
+      if best_idle.key?(state.time)
+        # assuming you can build a geode robot for all remaining times
+        # can you beat the current best assuming they build no more robots
+        # if not, then prune this branch
+        max_possible = state.available.geode + (state.mining.geode..(state.mining.geode + state.time - 1)).sum
+        next if max_possible <= best_idle[state.time]
+      end
+      curr_idle = state.available.geode + state.mining.geode * state.time
+      best_idle[state.time] = [best_idle[state.time].to_i, curr_idle].max
 
       next_available = state.available + state.mining
 
