@@ -1,27 +1,121 @@
 # frozen_string_literal: true
 
-Point = Struct.new(:x, :y)
+OPPOSITE = {
+  up: :down,
+  down: :up,
+  left: :right,
+  right: :left
+}.freeze
+
+ROTATION = {
+  up: :right,
+  right: :down,
+  down: :left,
+  left: :up
+}.freeze
+
+DIR_VAL = {
+  right: 0,
+  down: 1,
+  left: 2,
+  up: 3
+}.freeze
+
+def build_cube_net_transitions
+  output = {
+    # all possible moves to get from one tile to the tile on its right, and that tile's joining edge
+    # the rest of the directions can be rotated from this
+    right: [
+      # dist 1
+      [%i[right], :left],
+
+      # dist 2
+      [%i[down right], :up],
+      [%i[up right], :down],
+
+      # dist 3
+      [%i[left left left], :left],
+      [%i[down down right], :right],
+      [%i[up up right], :right],
+      [%i[left up up], :right],
+      [%i[left down down], :right],
+
+      # dist 4
+      [%i[left left down left], :down],
+      [%i[left left up left], :up],
+      [%i[left down left down], :up],
+      [%i[left up left up], :up],
+      [%i[down left left left], :up],
+      [%i[up left left left], :down],
+      [%i[down left down down], :down],
+      [%i[up left up up], :up],
+      [%i[down down down right], :down],
+      [%i[up up up right], :up],
+
+      # dist 5
+      [%i[left down left left down], :left],
+      [%i[left up left left up], :left],
+      [%i[down left left down left], :left],
+      [%i[up left left up left], :left],
+      [%i[down left down left down], :left],
+      [%i[up left up left up], :left],
+      [%i[down down left down down], :left],
+      [%i[up up left up up], :left]
+    ]
+  }
+
+  source = :right
+  3.times do
+    output[ROTATION[source]] = output[source].map do |(moves, edge)|
+      [moves.map { |move| ROTATION[move] }, ROTATION[edge]]
+    end
+    source = ROTATION[source]
+  end
+
+  output
+end
+
+CUBE_NET_TRANSITIONS = build_cube_net_transitions.freeze
+
+Point = Struct.new(:x, :y) do
+  def move(dir)
+    case dir
+    when :up
+      Point.new(x, y - 1)
+    when :down
+      Point.new(x, y + 1)
+    when :left
+      Point.new(x - 1, y)
+    when :right
+      Point.new(x + 1, y)
+    end
+  end
+end
+
+Node = Struct.new(:point, :is_wall, :face)
 
 DistMove = Struct.new(:amount)
 
 DirMove = Struct.new(:left) do
   def next_dir(curr_dir)
-    case curr_dir
-    when :up
-      left ? :left : :right
-    when :down
-      left ? :right : :left
-    when :left
-      left ? :down : :up
-    when :right
-      left ? :up : :down
-    else
-      raise 'unknown dir'
-    end
+    next_dir = ROTATION[curr_dir]
+    left ? OPPOSITE[next_dir] : next_dir
   end
 end
 
+
 Face = Struct.new(:coords, :side_length, :neighbours) do
+  def self.to_face_coords(point, side_length)
+    Point.new((point.x - 1) / side_length, (point.y - 1) / side_length)
+  end
+
+  def build_neighbours(face_map, part2: false)
+    set_neighbour(:up, *find_neighbour(face_map, :up, part2: part2))
+    set_neighbour(:down, *find_neighbour(face_map, :down, part2: part2))
+    set_neighbour(:left, *find_neighbour(face_map, :left, part2: part2))
+    set_neighbour(:right, *find_neighbour(face_map, :right, part2: part2))
+  end
+
   def set_neighbour(edge, face, target_edge)
     neighbours[edge] = { face: face, target_edge: target_edge }
   end
@@ -30,228 +124,116 @@ Face = Struct.new(:coords, :side_length, :neighbours) do
     local_point = to_local(point)
 
     # move within face
-    return [Point.new(point.x, point.y - 1), dir] if dir == :up && local_point.y > 1
-    return [Point.new(point.x, point.y + 1), dir] if dir == :down && local_point.y < side_length
-    return [Point.new(point.x - 1, point.y), dir] if dir == :left && local_point.x > 1
-    return [Point.new(point.x + 1, point.y), dir] if dir == :right && local_point.x < side_length
+    if dir == :up && local_point.y > 1 ||
+       dir == :down && local_point.y < side_length ||
+       dir == :left && local_point.x > 1 ||
+       dir == :right && local_point.x < side_length
+      return [point.move(dir), dir]
+    end
 
     neighbour = neighbours[dir]
+    target_edge = neighbour[:target_edge]
     next_local_point =
-      case [dir, neighbour[:target_edge]]
+      case [dir, target_edge]
       # normal transition
-      when %i[up down]
-        Point.new(local_point.x, side_length)
-      when %i[down up]
-        Point.new(local_point.x, 1)
-      when %i[left right]
-        Point.new(side_length, local_point.y)
-      when %i[right left]
-        Point.new(1, local_point.y)
+      when %i[up down], %i[down up]
+        Point.new(local_point.x, target_edge == :up ? 1 : side_length)
+      when %i[left right], %i[right left]
+        Point.new(target_edge == :left ? 1 : side_length, local_point.y)
 
       # transiting to mirrored face
-      when %i[up up]
-        Point.new(side_length - local_point.x + 1, 1)
-      when %i[down down]
-        Point.new(side_length - local_point.x + 1, side_length)
-      when %i[left left]
-        Point.new(1, side_length - local_point.y + 1)
-      when %i[right right]
-        Point.new(side_length, side_length - local_point.y + 1)
+      when %i[up up], %i[down down]
+        Point.new(side_length - local_point.x + 1, target_edge == :up ? 1 : side_length)
+      when %i[left left], %i[right right]
+        Point.new(target_edge == :left ? 1 : side_length, side_length - local_point.y + 1)
 
       # right angled transitions
-      when %i[up left]
-        Point.new(1, local_point.x)
-      when %i[left up]
-        Point.new(local_point.y, 1)
-      when %i[down right]
-        Point.new(side_length, local_point.x)
-      when %i[right down]
-        Point.new(local_point.y, side_length)
-      when %i[up right]
-        Point.new(side_length, side_length - local_point.x + 1)
-      when %i[right up]
-        Point.new(side_length - local_point.y + 1, 1)
-      when %i[down left]
-        Point.new(1, side_length - local_point.x + 1)
-      when %i[left down]
-        Point.new(side_length - local_point.y + 1, side_length)
+      when %i[up left], %i[down right]
+        Point.new(target_edge == :left ? 1 : side_length, local_point.x)
+      when %i[left up], %i[right down]
+        Point.new(local_point.y, target_edge == :up ? 1 : side_length)
+      when %i[up right], %i[down left]
+        Point.new(target_edge == :left ? 1 : side_length, side_length - local_point.x + 1)
+      when %i[right up], %i[left down]
+        Point.new(side_length - local_point.y + 1, target_edge == :up ? 1 : side_length)
       else
-        raise "unhandled transition: #{dir} => #{neighbour[:target_edge]}"
+        raise "unhandled transition: #{dir} => #{target_edge}"
       end
 
-    next_dir =
-      case neighbour[:target_edge]
-      when :up
-        :down
-      when :down
-        :up
-      when :left
-        :right
-      when :right
-        :left
-      else
-        raise "unknown dir #{dir}"
-      end
-
-    [neighbour[:face].to_global(next_local_point), next_dir]
+    [neighbour[:face].to_global(next_local_point), OPPOSITE[target_edge]]
   end
 
+  # convert from point within face to global point
   def to_global(local_point)
     Point.new(local_point.x + side_length * coords.x, local_point.y + side_length * coords.y)
   end
 
+  # convert from global point to point within face
   def to_local(global_point)
     Point.new(global_point.x - side_length * coords.x, global_point.y - side_length * coords.y)
   end
-end
 
-Node = Struct.new(:point, :is_wall, :face)
+  private
 
-# would be cool to have this be generated from input, but at this point, I cbf
-class FaceMap
-  class << self
-    def build_sample(part2: false)
-      # sample(side=4)
-      # - - 0
-      # 1 2 3
-      # - - 4 5
-
-      edge_joins =
-        if part2
-          # cube layout
-          [
-            [[0, :up], [1, :up]],
-            [[0, :down], [3, :up]],
-            [[0, :left], [2, :up]],
-            [[0, :right], [5, :right]],
-            [[1, :down], [4, :down]],
-            [[1, :left], [5, :down]],
-            [[1, :right], [2, :left]],
-            [[2, :down], [4, :left]],
-            [[2, :right], [3, :left]],
-            [[3, :down], [4, :up]],
-            [[3, :right], [5, :up]],
-            [[4, :right], [5, :left]]
-          ]
-        else
-          # flat layout
-          [
-            [[0, :up], [4, :down]],
-            [[0, :down], [3, :up]],
-            [[0, :left], [0, :right]],
-            [[1, :up], [1, :down]],
-            [[1, :left], [3, :right]],
-            [[1, :right], [2, :left]],
-            [[2, :up], [2, :down]],
-            [[2, :right], [3, :left]],
-            [[3, :down], [4, :up]],
-            [[4, :left], [5, :right]],
-            [[4, :right], [5, :left]],
-            [[5, :up], [5, :down]]
-          ]
-        end
-
-      build_face_map(
-        [
-          Point.new(2, 0),
-          Point.new(0, 1),
-          Point.new(1, 1),
-          Point.new(2, 1),
-          Point.new(2, 2),
-          Point.new(3, 2)
-        ],
-        edge_joins,
-        4
-      )
+  def find_neighbour(face_map, dir, part2: false)
+    if part2
+      find_neighbour_part2(face_map, dir)
+    else
+      find_neighbour_part1(face_map, dir)
     end
+  end
 
-    def build_actual(part2: false)
-      # real(side=50)
-      # - 0 1
-      # - 2
-      # 3 4
-      # 5
+  # all neighbours are either adjacent or direct wrap arounds
+  def find_neighbour_part1(face_map, dir)
+    return [face_map[coords.move(dir)], OPPOSITE[dir]] if face_map.key?(coords.move(dir))
 
-      edge_joins =
-        if part2
-          # cube layout
-          [
-            [[0, :up], [5, :left]],
-            [[0, :down], [2, :up]],
-            [[0, :left], [3, :left]],
-            [[0, :right], [1, :left]],
-            [[1, :up], [5, :down]],
-            [[1, :down], [2, :right]],
-            [[1, :right], [4, :right]],
-            [[2, :down], [4, :up]],
-            [[2, :left], [3, :up]],
-            [[3, :down], [5, :up]],
-            [[3, :right], [4, :left]],
-            [[4, :down], [5, :right]]
-          ]
-        else
-          # flat layout
-          [
-            [[0, :up], [4, :down]],
-            [[0, :down], [2, :up]],
-            [[0, :left], [1, :right]],
-            [[0, :right], [1, :left]],
-            [[1, :up], [1, :down]],
-            [[2, :down], [4, :up]],
-            [[2, :left], [2, :right]],
-            [[3, :up], [5, :down]],
-            [[3, :down], [5, :up]],
-            [[3, :left], [4, :right]],
-            [[3, :right], [4, :left]],
-            [[5, :left], [5, :right]]
-          ]
-        end
-
-      build_face_map(
-        [
-          Point.new(1, 0),
-          Point.new(2, 0),
-          Point.new(1, 1),
-          Point.new(0, 2),
-          Point.new(1, 2),
-          Point.new(0, 3)
-        ],
-        edge_joins,
-        50
-      )
-    end
-
-    private
-
-
-    def build_face_map(coords, joins, side_length)
-      faces = coords.map do |coord|
-        Face.new(coord, side_length, {})
+    adj_coords =
+      case dir
+      when :up
+        face_map.keys.filter { |point| point.x == coords.x }.max_by(&:y)
+      when :down
+        face_map.keys.filter { |point| point.x == coords.x }.min_by(&:y)
+      when :left
+        face_map.keys.filter { |point| point.y == coords.y }.max_by(&:x)
+      when :right
+        face_map.keys.filter { |point| point.y == coords.y }.min_by(&:x)
       end
 
-      joins.each do |(from_face_i, from_edge), (to_face_i, to_edge)|
-        from_face = faces[from_face_i]
-        to_face = faces[to_face_i]
-        from_face.set_neighbour(from_edge, to_face, to_edge)
-        to_face.set_neighbour(to_edge, from_face, from_edge)
-      end
+    [face_map[adj_coords], OPPOSITE[dir]]
+  end
 
-      faces.to_h { |face| [face.coords, face] }
-    end
+  # faces form a cube net, use const to face and target edge
+  def find_neighbour_part2(face_map, dir)
+    CUBE_NET_TRANSITIONS[dir].lazy.map do |moves, target_edge|
+      point = coords
+      failed = false
+      moves.each do |move|
+        # try to move from current face to neighbour through moves
+        # fail fast if any move is invalid
+        point = point.move(move)
+        unless face_map.key?(point)
+          failed = true
+          break
+        end
+      end
+      next if failed
+
+      [face_map[point], target_edge]
+    end.reject(&:nil?).first
   end
 end
 
 class Day22
-  DIR_VAL = {
-    right: 0,
-    down: 1,
-    left: 2,
-    up: 3
-  }.freeze
-
   def initialize(lines)
     @map, moves = lines.slice_after('').to_a
     moves = moves[0]
+
+    chars = @map.map(&:chars)
+    min_width = chars.filter { |row| row.length.positive? }.map { |row| row.count { |char| char != ' ' } }.min
+    min_height = (0...chars.map(&:length).max).map do |col|
+      chars.count { |row| row[col] && row[col] != ' ' }
+    end.min
+    @side_length = [min_width, min_height].min
 
     @moves = []
     while moves.length.positive?
@@ -262,15 +244,13 @@ class Day22
   end
 
   def part1
-    # faces = FaceMap.build_sample
-    faces = FaceMap.build_actual
-    solve(parse_map(faces))
+    face_map = build_face_map
+    solve(build_grid(face_map))
   end
 
   def part2
-    # faces = FaceMap.build_sample(part2: true)
-    faces = FaceMap.build_actual(part2: true)
-    solve(parse_map(faces))
+    face_map = build_face_map(part2: true)
+    solve(build_grid(face_map))
   end
 
   private
@@ -300,22 +280,41 @@ class Day22
     output(curr, dir)
   end
 
-  def parse_map(face_map)
+  def output(point, dir)
+    point.y * 1000 + point.x * 4 + DIR_VAL[dir]
+  end
+
+  def build_face_map(part2: false)
+    faces = {}
+    # could exist on 4x4 grid
+    chars = @map.map(&:chars)
+    4.times do |y|
+      4.times do |x|
+        next unless chars[@side_length * y] && %w[. #].include?(chars[@side_length * y][@side_length * x])
+
+        point = Point.new(x, y)
+        faces[point] = Face.new(point, @side_length, {})
+      end
+    end
+
+    faces.each_value { |face| face.build_neighbours(faces, part2: part2) }
+    faces
+  end
+
+  def build_grid(face_map)
     grid = {}
-    side_length = face_map.values.first.side_length
+
     @map.each_with_index do |row, y|
       row.chars.each_with_index do |cell, x|
         next if cell == ' '
 
         point = Point.new(x + 1, y + 1)
-        grid[point] = Node.new(point, cell == '#', face_map[Point.new(x / side_length, y / side_length)] {})
+        face = face_map[Face.to_face_coords(point, @side_length)]
+        grid[point] = Node.new(point, cell == '#', face)
       end
     end
-    grid
-  end
 
-  def output(point, dir)
-    point.y * 1000 + point.x * 4 + DIR_VAL[dir]
+    grid
   end
 end
 
